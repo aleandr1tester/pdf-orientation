@@ -18,7 +18,7 @@ if (!EDGE) {
   process.exit(1);
 }
 const ROOT = path.resolve(__dirname, '..');
-const APP = 'file:///' + path.join(ROOT, 'index.html').replace(/\\/g, '/');
+const APP = process.env.APP_URL || 'file:///' + path.join(ROOT, 'index.html').replace(/\\/g, '/');
 const PORT = Number(process.env.CDP_PORT || 9333);
 
 const input = process.argv[2];
