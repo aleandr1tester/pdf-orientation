@@ -725,6 +725,180 @@
     return page;
   }
 
+  /* ---------- просмотр страницы крупно ---------- */
+  const lightbox = {
+    el: null,
+    page: null,
+    mode: 'result',
+    zoom: 1,
+    source: null,
+  };
+
+  function buildLightbox() {
+    const el = document.createElement('div');
+    el.className = 'lightbox';
+    el.hidden = true;
+    el.innerHTML =
+      '<div class="lightbox-bar">' +
+      '  <span class="lightbox-title"></span>' +
+      '  <div class="lb-seg">' +
+      '    <button type="button" data-mode="result" class="is-active">Результат</button>' +
+      '    <button type="button" data-mode="source">Исходник</button>' +
+      '  </div>' +
+      '  <button type="button" class="lb-zoom-btn" data-zoom="-1" title="Уменьшить (−)">−</button>' +
+      '  <span class="lb-zoom">100%</span>' +
+      '  <button type="button" class="lb-zoom-btn" data-zoom="1" title="Увеличить (+)">+</button>' +
+      '  <button type="button" class="lb-close" title="Закрыть (Esc)">×</button>' +
+      '</div>' +
+      '<div class="lb-scroll"><canvas></canvas></div>';
+
+    el.addEventListener('click', (e) => {
+      if (e.target === el) closeLightbox();
+    });
+    el.querySelector('.lb-close').addEventListener('click', closeLightbox);
+    el.querySelectorAll('[data-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        lightbox.mode = btn.dataset.mode;
+        renderLightbox();
+      });
+    });
+    el.querySelectorAll('[data-zoom]').forEach((btn) => {
+      btn.addEventListener('click', () => setZoom(lightbox.zoom + Number(btn.dataset.zoom) * 0.25));
+    });
+
+    lightbox.el = el;
+    lightbox.canvas = el.querySelector('canvas');
+    lightbox.title = el.querySelector('.lightbox-title');
+    lightbox.scroll = el.querySelector('.lb-scroll');
+    lightbox.zoomLabel = el.querySelector('.lb-zoom');
+    lightbox.modeButtons = Array.from(el.querySelectorAll('[data-mode]'));
+  }
+
+  async function ensureSource(page) {
+    if (lightbox.source && lightbox.source.page === page && lightbox.source.docName === state.fileName) {
+      return;
+    }
+    const pdf = state.doc && state.doc.pdfjs;
+    if (!pdf) return;
+
+    const view = page.view;
+    const wPt = view.x1 - view.x0;
+    const hPt = view.y1 - view.y0;
+    const scale = clamp(1800 / Math.max(wPt, hPt), 0.8, 2.5);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(wPt * scale));
+    canvas.height = Math.max(1, Math.ceil(hPt * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const pdfPage = await pdf.getPage(page.index + 1);
+    const viewport = pdfPage.getViewport({ scale: scale, rotation: 0 });
+    await pdfPage.render({ canvasContext: ctx, viewport: viewport, background: '#ffffff' }).promise;
+    if (pdfPage.cleanup) pdfPage.cleanup();
+
+    lightbox.source = { page: page, canvas: canvas, scale: scale, docName: state.fileName };
+  }
+
+  async function openLightbox(page) {
+    if (!state.doc) return;
+    if (!lightbox.el) buildLightbox();
+    if (!lightbox.el.parentNode) document.body.appendChild(lightbox.el);
+
+    lightbox.page = page;
+    lightbox.mode = 'result';
+    lightbox.zoom = 1;
+    lightbox.source = null;
+    lightbox.el.hidden = false;
+    document.body.classList.add('lb-open');
+    lightbox.title.textContent = 'Загрузка…';
+
+    try {
+      await ensureSource(page);
+    } catch (err) {
+      console.warn('Не удалось отрисовать страницу крупно', err);
+    }
+    renderLightbox();
+  }
+
+  function closeLightbox() {
+    if (!lightbox.el) return;
+    lightbox.el.hidden = true;
+    lightbox.page = null;
+    lightbox.source = null;
+    document.body.classList.remove('lb-open');
+  }
+
+  function setZoom(value) {
+    lightbox.zoom = clamp(Number(value) || 1, 0.5, 4);
+    applyZoom();
+  }
+
+  function applyZoom() {
+    if (!lightbox.canvas) return;
+    const canvas = lightbox.canvas;
+    const available = Math.max(240, lightbox.scroll.clientWidth - 28);
+    const base = Math.min(available, canvas.width);
+    canvas.style.width = Math.round(base * lightbox.zoom) + 'px';
+    canvas.style.height = 'auto';
+    lightbox.zoomLabel.textContent = Math.round(lightbox.zoom * 100) + '%';
+  }
+
+  function renderLightbox() {
+    const page = lightbox.page;
+    if (!page || !lightbox.el) return;
+
+    const st = effective(page);
+    const placement = core.computePlacement(st.bbox, st);
+    const paper = paperName(placement.pageWidth, placement.pageHeight);
+    lightbox.title.textContent =
+      'Страница ' + (page.index + 1) +
+      ' · ' + (paper ? paper : fmtMM(placement.pageWidth) + '×' + fmtMM(placement.pageHeight)) +
+      ' · ' + (placement.pageWidth > placement.pageHeight ? 'альбомный' : 'книжный') +
+      (isChanged(page) ? ' · изменена' : '');
+    lightbox.modeButtons.forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.mode === lightbox.mode);
+    });
+
+    const canvas = lightbox.canvas;
+    const ctx = canvas.getContext('2d');
+
+    if (lightbox.mode === 'source' && lightbox.source) {
+      canvas.width = lightbox.source.canvas.width;
+      canvas.height = lightbox.source.canvas.height;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(lightbox.source.canvas, 0, 0);
+      applyZoom();
+      return;
+    }
+
+    const k = 2;
+    canvas.width = Math.max(1, Math.round(placement.pageWidth * k));
+    canvas.height = Math.max(1, Math.round(placement.pageHeight * k));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!lightbox.source) {
+      applyZoom();
+      return;
+    }
+
+    const [a, b, c, d, e, f] = placement.matrix;
+    const m = new DOMMatrix([a, b, c, d, e, f]);
+    const imgToPt = new DOMMatrix()
+      .translate(page.view.x0, page.view.y1)
+      .scale(1 / lightbox.source.scale, -1 / lightbox.source.scale);
+    const ptToPx = new DOMMatrix([k, 0, 0, -k, 0, placement.pageHeight * k]);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.setTransform(ptToPx.multiply(m).multiply(imgToPt));
+    ctx.drawImage(lightbox.source.canvas, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    applyZoom();
+  }
+
   /* ---------- карточки страниц ---------- */
   const ROT_ICON_LEFT =
     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.9-6.4"/><path d="M3 4.5V10h5.4"/></svg>';
@@ -766,6 +940,11 @@
         rotateOne(page, Number(btn.dataset.rot));
         refreshAfterChange();
       });
+    });
+
+    card.querySelector('canvas').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openLightbox(page);
     });
 
     page.el = card;
@@ -1201,6 +1380,51 @@
       toast('Вернул исходную ориентацию');
     });
     els.btnHelp.addEventListener('click', showHelp);
+
+    // Горячие клавиши
+    document.addEventListener('keydown', (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+      const key = (e.key || '').toLowerCase();
+
+      if (key === 'escape') {
+        if (lightbox.page) {
+          e.preventDefault();
+          closeLightbox();
+        }
+        return;
+      }
+      if (lightbox.page && (key === '+' || key === '=' || key === '-')) {
+        e.preventDefault();
+        setZoom(lightbox.zoom + (key === '-' ? -0.25 : 0.25));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && key === 's') {
+        e.preventDefault();
+        download();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!state.pages.length) return;
+
+      if (key === 'r') {
+        e.preventDefault();
+        rotateTargets(e.shiftKey ? 90 : -90);
+        if (lightbox.page) renderLightbox();
+        return;
+      }
+      if (key === 'a') {
+        e.preventDefault();
+        applySheet('landscape');
+        if (lightbox.page) renderLightbox();
+        return;
+      }
+      if (key === 'k') {
+        e.preventDefault();
+        applySheet('portrait');
+        if (lightbox.page) renderLightbox();
+      }
+    });
   }
 
   /* ---------- справка ---------- */
@@ -1220,8 +1444,11 @@
       '<li><b>Повернуть ↺ / ↻</b> — крутит саму страницу: пригодится для сканов, лежащих боком. Лист при этом меняет ориентацию.</li>' +
       '<li><b>Несколько файлов</b> — перетащите сразу пачку PDF. С включённой галочкой «Применять ко всем файлам» настройки ' +
       'применяются ко всей пачке, а <b>Скачать всё (ZIP)</b> отдаёт один архив.</li>' +
+      '<li><b>Клик по превью</b> — открывает страницу крупно: масштаб и переключение «Результат / Исходник».</li>' +
       '<li><b>Проверить</b> — открывает готовый файл в новой вкладке, <b>Скачать PDF</b> — сохраняет.</li>' +
       '</ul>' +
+      '<p class="muted"><b>Горячие клавиши:</b> R — повернуть по часовой, Shift+R — против часовой, ' +
+      'A — альбомный лист, K — книжный, Ctrl+S — скачать, Esc — закрыть просмотр, +/− — масштаб.</p>' +
       '<p class="muted">Если PDF подписан электронной подписью, после изменения подпись станет недействительной. ' +
       'Файлы не отправляются в интернет — всё считается на вашем компьютере.</p>' +
       '<div class="dialog-actions"><button class="btn btn-primary" id="helpClose" type="button">Понятно</button></div>';
@@ -1353,6 +1580,20 @@
         view: p.view,
         data: p.thumb.toDataURL('image/png'),
       }));
+    },
+    openPreview(index) {
+      return openLightbox(state.pages[index || 0]);
+    },
+    closePreview() {
+      closeLightbox();
+    },
+    lightboxState() {
+      return {
+        open: !!lightbox.page,
+        mode: lightbox.mode,
+        zoom: lightbox.zoom,
+        title: lightbox.title ? lightbox.title.textContent : '',
+      };
     },
   };
 
