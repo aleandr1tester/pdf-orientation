@@ -1,0 +1,7 @@
+# Сборка и временные файлы
+dev/out/
+.tmp-edge-profile/
+node_modules/
+*.log
+.DS_Store
+Thumbs.db

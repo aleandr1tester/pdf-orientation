@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+*.pdf binary
+*.png binary
+*.jpg binary
+
+index.html linguist-generated=true
+vendor/* linguist-vendored

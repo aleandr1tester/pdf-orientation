@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Сборка автономного index.html
+        run: node build.js
+
+      - name: Проверка, что приложение собралось
+        run: |
+          test -s index.html
+          node -e "const s=require('fs').readFileSync('index.html','utf8'); if(!s.includes('__PDFORIENT__')) throw new Error('app.js не встроен'); if(s.includes('__WORKER__')) throw new Error('worker не встроен'); console.log('index.html OK', (Buffer.byteLength(s)/1024/1024).toFixed(2)+' MB');"
+
+      - name: Тесты геометрии
+        run: node dev/test-core.js
+
+      - name: Тесты поворотов
+        run: node dev/test-rotations.js
+
+      - name: Пустая страница и аннотации
+        run: node dev/test-annot.js

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Смена ориентации PDF — книжный и альбомный лист</title>
+<meta name="description" content="Быстро развернуть PDF на альбомный или книжный лист. Работает локально в браузере, файлы никуда не отправляются.">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="%23146b52"/><rect x="6" y="4.5" width="7" height="15" rx="1.4" fill="white"/><rect x="15" y="7.5" width="4.5" height="8" rx="1.2" fill="white" opacity=".72"/></svg>'>
+<style>
+/*__STYLE__*/
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3.5" y="3.5" width="8" height="17" rx="1.4"/>
+          <rect x="14" y="7" width="6.5" height="10" rx="1.4"/>
+          <path d="M15.8 10.2h3M15.8 13h3"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Смена ориентации PDF</h1>
+        <p>Широкий бланк — на альбомный лист за пару секунд</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn btn-ghost btn-sm" id="btnHelp" type="button" title="Как это работает">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.9v.3"/><path d="M12 17h.01"/></svg>
+        Как это работает
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Загрузка -->
+  <section id="dropzoneSection" class="dropzone-wrap">
+    <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Выбрать PDF-файл">
+      <div class="dropzone-icon" aria-hidden="true">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+          <path d="M14 3v5h5"/>
+          <path d="M9 16l2-2 1.6 1.6L15 13l1.5 1.5"/>
+        </svg>
+      </div>
+      <h2>Перетащите PDF сюда</h2>
+      <p>или нажмите, чтобы выбрать файл</p>
+      <div class="hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        Файл обрабатывается в браузере и никуда не загружается
+      </div>
+    </div>
+    <div class="drop-hint">Подойдут бланки, счета, акты, таблицы — всё, что свёрстано широко, а пришло на книжном листе</div>
+  </section>
+
+  <!-- Загрузка идёт -->
+  <section id="loadingSection" class="dropzone-wrap" hidden>
+    <div class="loading-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="title" id="loadingTitle">Открываю документ…</div>
+      <div class="sub" id="loadingSub">Это займёт пару секунд</div>
+      <div class="progress" id="loadingProgressWrap" hidden><i id="loadingProgress"></i></div>
+    </div>
+  </section>
+
+  <!-- Рабочая область -->
+  <section id="workspace" class="workspace" aria-live="polite">
+    <div class="banner" id="autoBanner" role="status">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.4L12 15l-1.9-4.6L5.5 9l4.6-1.4z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg>
+      <div id="autoBannerText"></div>
+      <button class="btn btn-ghost btn-sm undo" id="btnUndoAuto" type="button">Вернуть как было</button>
+    </div>
+
+    <div class="filebar">
+      <div class="file-ico" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+      </div>
+      <div class="file-meta">
+        <div class="name" id="fileName">document.pdf</div>
+        <div class="sub" id="fileSub">1 страница</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="actions">
+        <button class="btn btn-sm" id="btnOtherFile" type="button">Другой файл</button>
+        <button class="btn btn-sm" id="btnPreviewResult" type="button" title="Открыть готовый PDF в новой вкладке">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 4.5 12 4.5 22.5 12 22.5 12 18.5 19.5 12 19.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          Проверить
+        </button>
+        <button class="btn btn-primary" id="btnDownload" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+          Скачать PDF
+        </button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="panel">
+        <h2>Ориентация</h2>
+        <div class="presets">
+          <button class="preset is-wide" data-preset="landscape" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="1.8"/><path d="M2.5 9.5h19"/></svg>
+            <span class="txt">
+              <span class="t">Развернуть на альбомный</span>
+              <span class="d">Содержимое остаётся ровным и увеличивается</span>
+            </span>
+          </button>
+          <button class="preset" data-preset="portrait" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="1.8"/><path d="M9.5 2.5v19"/></svg>
+            <span class="txt">
+              <span class="t">На книжный лист</span>
+              <span class="d">A4 портрет</span>
+            </span>
+          </button>
+          <button class="preset" data-preset="reset" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2.2"/><path d="M8 12.2l2.6 2.6L16.2 9.2"/></svg>
+            <span class="txt">
+              <span class="t">Оригинал</span>
+              <span class="d">как в файле</span>
+            </span>
+          </button>
+          <button class="preset" data-preset="rotate-left" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3.2-6.9"/><path d="M3 4v5h5"/></svg>
+            <span class="txt">
+              <span class="t">Повернуть ↺</span>
+              <span class="d">против часовой</span>
+            </span>
+          </button>
+          <button class="preset" data-preset="rotate-right" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.2-6.9"/><path d="M21 4v5h-5"/></svg>
+            <span class="txt">
+              <span class="t">Повернуть ↻</span>
+              <span class="d">по часовой</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label class="cap" for="fmtSelect">Формат листа</label>
+          <select id="fmtSelect">
+            <option value="auto">Как в документе</option>
+            <option value="A4">A4 — 210 × 297 мм</option>
+            <option value="A5">A5 — 148 × 210 мм</option>
+            <option value="A3">A3 — 297 × 420 мм</option>
+            <option value="Letter">Letter — 216 × 279 мм</option>
+          </select>
+        </div>
+
+        <div class="field row-2">
+          <div>
+            <label class="cap" for="fitSelect">Масштаб</label>
+            <select id="fitSelect">
+              <option value="contain">Вписать в лист</option>
+              <option value="width">По ширине листа</option>
+              <option value="none">1 : 1</option>
+            </select>
+          </div>
+          <div>
+            <label class="cap" for="marginInput">Поля, мм</label>
+            <input id="marginInput" type="number" min="0" max="40" step="1" value="5" inputmode="numeric">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" id="cropCheck" checked>
+            <span>Обрезать белые поля<small class="sub">Содержимое сдвигается и растягивается на весь лист</small></span>
+          </label>
+        </div>
+
+        <div class="summary-box" id="summaryBox">—</div>
+
+        <div class="note">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>Если PDF подписан электронной подписью, после сохранения подпись перестанет быть действительной. Для печати это обычно не важно.</span>
+        </div>
+      </aside>
+
+      <div class="pages-col">
+        <div class="pages-head">
+          <h2>Страницы</h2>
+          <span class="sub" id="pagesSub">Предпросмотр результата</span>
+          <div class="links">
+            <button class="btn btn-ghost btn-sm" id="btnSelectAll" type="button">Выбрать все</button>
+            <button class="btn btn-ghost btn-sm" id="btnReset" type="button">Сбросить</button>
+          </div>
+        </div>
+        <div class="pages" id="pagesGrid"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3l7 3v6c0 4.4-3 7.5-7 9-4-1.5-7-4.6-7-9V6z"/></svg>
+  <span>Работает офлайн: файлы не покидают ваш компьютер. Текст остаётся векторным и чётким.</span>
+</footer>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+<input type="file" id="fileInput" accept="application/pdf,.pdf" class="sr-only" multiple>
+
+<script type="text/plain" id="pdf-worker-src">/*__WORKER__*/</script>
+<script>/*__PDFLIB__*/</script>
+<script>/*__PDFJS__*/</script>
+<script>/*__CORE__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>

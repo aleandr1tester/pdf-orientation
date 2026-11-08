@@ -1,0 +1,13 @@
+{
+  "name": "pdf-orientation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Смена ориентации PDF: разворачивает книжный бланк на альбомный лист. Один HTML-файл, работает офлайн.",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node dev/test-core.js && node dev/test-rotations.js && node dev/test-annot.js",
+    "fixtures": "node dev/make-demo.js"
+  },
+  "keywords": ["pdf", "orientation", "landscape", "portrait", "pdf-lib", "pdf.js", "offline"],
+  "license": "MIT"
+}
