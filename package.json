@@ -1,6 +1,6 @@
 {
   "name": "pdf-orientation",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Смена ориентации PDF: разворачивает книжный бланк на альбомный лист. Один HTML-файл, работает офлайн.",
   "scripts": {
