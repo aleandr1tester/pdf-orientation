@@ -4,6 +4,7 @@
 Одностраничное приложение в одном HTML-файле: счета, акты, УПД, таблицы и другие широкие
 бланки, которые пришли на книжном листе, превращаются в нормальный альбомный A4.
 
+[![CI](https://github.com/aleandr1tester/pdf-orientation/actions/workflows/ci.yml/badge.svg)](https://github.com/aleandr1tester/pdf-orientation/actions/workflows/ci.yml)
 [![Demo](https://img.shields.io/badge/demo-GitHub%20Pages-146b52)](https://aleandr1tester.github.io/pdf-orientation/)
 
 ![Интерфейс приложения](docs/screenshot.png)
@@ -113,8 +114,7 @@ node dev/test-browser.js dev/fixtures/book-invoice.pdf out.pdf screenshot.png
 альбомный бланк, его «книжная» версия, многостраничный и повёрнутый документы.
 Данные в них вымышленные.
 
-Готовый конфиг GitHub Actions лежит в `dev/ci.example.yml`: скопируйте его в
-`.github/workflows/ci.yml`, чтобы CI собирал приложение и гонял тесты на каждый push.
+CI настроен в `.github/workflows/ci.yml`: на каждый push собирает `index.html` и гоняет тесты.
 
 ## Лицензия
 
