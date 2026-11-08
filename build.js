@@ -7,6 +7,7 @@ const root = __dirname;
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const template = read('src/index.template.html');
+const pkg = JSON.parse(read('package.json'));
 const css = read('src/style.css');
 const core = read('src/orient-core.js');
 const app = read('src/app.js');
@@ -27,6 +28,7 @@ const put = (token, value) => {
 };
 
 put('/*__STYLE__*/', css);
+put('__VERSION__', pkg.version || 'dev');
 put('/*__PDFLIB__*/', pdfLib);
 put('/*__PDFJS__*/', pdfJs);
 put('/*__JSZIP__*/', jszip);

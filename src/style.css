@@ -585,6 +585,7 @@ footer {
   display: flex; gap: 8px; align-items: center; justify-content: center;
   flex-wrap: wrap;
 }
+footer .ver { opacity: .65; font-size: 11px; }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
