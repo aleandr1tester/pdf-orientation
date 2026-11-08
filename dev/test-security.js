@@ -60,6 +60,33 @@ check('имена в ZIP берутся из outputName', /zip\.file\(name, blob
 console.log('\nФайл имён в download-атрибуте очищается');
 check('saveBlob получает уже очищенное имя', /a\.download = name/.test(app));
 
+// Правило проекта: в текстах, комментариях и коде — только русский и английский.
+// Китайские иероглифы запрещены: они легко попадают в комментарии по ошибке.
+console.log('\nНет китайских символов в текстах и коде');
+const TEXT_EXT = /\.(js|mjs|cjs|html|css|md|json|yml|yaml|txt)$/i;
+const CJK = /[\u4e00-\u9fff]/;
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'dev/out', '.tmp-edge-profile']);
+const cjkFiles = [];
+let scanned = 0;
+
+function walkTextFiles(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const rel = path.relative(ROOT, full).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name) || SKIP_DIRS.has(rel)) continue;
+      walkTextFiles(full);
+      continue;
+    }
+    if (!TEXT_EXT.test(entry.name)) continue;
+    scanned++;
+    if (CJK.test(fs.readFileSync(full, 'utf8'))) cjkFiles.push(rel);
+  }
+}
+walkTextFiles(ROOT);
+check('китайских символов нет в ' + scanned + ' текстовых файлах', cjkFiles.length === 0);
+for (const file of cjkFiles) console.error('  файл с CJK: ' + file);
+
 if (failures) {
   console.error('\nПровалено проверок: ' + failures);
   process.exit(1);
