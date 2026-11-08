@@ -1097,33 +1097,80 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return placement;
   }
 
-  // Пересчитывает /Rect аннотаций той же матрицей, что и содержимое.
+  // Пересчитывает /Rect, /QuadPoints и /InkList аннотаций той же матрицей, что и содержимое.
   function transformAnnotationRects(doc, page, matrix) {
     const annots = page.node.Annots ? page.node.Annots() : null;
     if (!annots || typeof annots.size !== 'function') return;
     const [a, b, c, d, e, f] = matrix;
+    const point = (x, y) => [a * x + c * y + e, b * x + d * y + f];
+
+    const readNumbers = (arr) => {
+      if (!arr || typeof arr.size !== 'function') return null;
+      const out = [];
+      for (let i = 0; i < arr.size(); i++) {
+        const n = arr.lookup(i);
+        if (!n || typeof n.asNumber !== 'function') return null;
+        out.push(n.asNumber());
+      }
+      return out;
+    };
+
     for (let i = 0; i < annots.size(); i++) {
       const dict = doc.context.lookup(annots.get(i));
       if (!dict || typeof dict.lookup !== 'function') continue;
-      const rect = dict.lookup(PDFName.of('Rect'));
-      if (!rect || typeof rect.size !== 'function' || rect.size() !== 4) continue;
-      const v = [0, 1, 2, 3].map((k) => {
-        const n = rect.lookup(k);
-        return n && typeof n.asNumber === 'function' ? n.asNumber() : NaN;
-      });
-      if (v.some((n) => !isFinite(n))) continue;
-      const pts = [
-        [v[0], v[1]],
-        [v[2], v[1]],
-        [v[0], v[3]],
-        [v[2], v[3]],
-      ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
-      const xs = pts.map((p) => p[0]);
-      const ys = pts.map((p) => p[1]);
-      dict.set(
-        PDFName.of('Rect'),
-        doc.context.obj([Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)])
-      );
+
+      const rect = readNumbers(dict.lookup(PDFName.of('Rect')));
+      if (rect && rect.length === 4) {
+        const pts = [
+          point(rect[0], rect[1]),
+          point(rect[2], rect[1]),
+          point(rect[0], rect[3]),
+          point(rect[2], rect[3]),
+        ];
+        const xs = pts.map((p) => p[0]);
+        const ys = pts.map((p) => p[1]);
+        dict.set(
+          PDFName.of('Rect'),
+          doc.context.obj([Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)])
+        );
+      }
+
+      const quad = readNumbers(dict.lookup(PDFName.of('QuadPoints')));
+      if (quad && quad.length >= 8 && quad.length % 8 === 0) {
+        const result = [];
+        for (let q = 0; q < quad.length; q += 8) {
+          const pts = [];
+          for (let p = 0; p < 4; p++) pts.push(point(quad[q + p * 2], quad[q + p * 2 + 1]));
+          // порядок углов: верх-лево, верх-право, низ-лево, низ-право
+          pts.sort((p1, p2) => p2[1] - p1[1]);
+          const top = pts.slice(0, 2).sort((p1, p2) => p1[0] - p2[0]);
+          const bottom = pts.slice(2, 4).sort((p1, p2) => p1[0] - p2[0]);
+          const ordered = top.concat(bottom);
+          for (const p of ordered) result.push(p[0], p[1]);
+        }
+        dict.set(PDFName.of('QuadPoints'), doc.context.obj(result));
+      }
+
+      const ink = dict.lookup(PDFName.of('InkList'));
+      if (ink && typeof ink.size === 'function') {
+        const strokes = [];
+        for (let s = 0; s < ink.size(); s++) {
+          const numbers = readNumbers(ink.lookup(s));
+          if (!numbers || numbers.length % 2 !== 0) {
+            strokes.length = 0;
+            break;
+          }
+          const transformed = [];
+          for (let p = 0; p < numbers.length; p += 2) {
+            const tp = point(numbers[p], numbers[p + 1]);
+            transformed.push(tp[0], tp[1]);
+          }
+          strokes.push(transformed);
+        }
+        if (strokes.length) {
+          dict.set(PDFName.of('InkList'), doc.context.obj(strokes));
+        }
+      }
     }
   }
 
@@ -2210,9 +2257,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const label = (name ? name : 'свой размер') + (sample.sheetW > sample.sheetH ? ', альбомный' : ', книжный');
     const ratios = changed.map((p) => core.computePlacement(effective(p).bbox, effective(p)).scale);
     const maxRatio = Math.max.apply(null, ratios);
+    const clipped = changed.filter((p) => {
+      const pl = core.computePlacement(effective(p).bbox, effective(p));
+      return pl.contentHeight > pl.pageHeight + 0.5 || pl.contentWidth > pl.pageWidth + 0.5;
+    }).length;
     els.summaryBox.innerHTML =
       'Изменяется <b>' + changed.length + '</b> из ' + total + ' стр. · <b>' + label + '</b>' +
       (maxRatio > 1.03 ? ' · содержимое крупнее в <b>×' + maxRatio.toFixed(2) + '</b>' : '') +
+      (clipped ? ' · <b>внимание:</b> обрежется ' + clipped + ' стр.' : '') +
       multi;
     els.btnDownload.disabled = false;
   }

@@ -1051,9 +1051,14 @@
     const label = (name ? name : 'свой размер') + (sample.sheetW > sample.sheetH ? ', альбомный' : ', книжный');
     const ratios = changed.map((p) => core.computePlacement(effective(p).bbox, effective(p)).scale);
     const maxRatio = Math.max.apply(null, ratios);
+    const clipped = changed.filter((p) => {
+      const pl = core.computePlacement(effective(p).bbox, effective(p));
+      return pl.contentHeight > pl.pageHeight + 0.5 || pl.contentWidth > pl.pageWidth + 0.5;
+    }).length;
     els.summaryBox.innerHTML =
       'Изменяется <b>' + changed.length + '</b> из ' + total + ' стр. · <b>' + label + '</b>' +
       (maxRatio > 1.03 ? ' · содержимое крупнее в <b>×' + maxRatio.toFixed(2) + '</b>' : '') +
+      (clipped ? ' · <b>внимание:</b> обрежется ' + clipped + ' стр.' : '') +
       multi;
     els.btnDownload.disabled = false;
   }
