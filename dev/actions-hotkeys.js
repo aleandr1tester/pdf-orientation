@@ -1,3 +1,4 @@
+// Действие для сквозного теста: проверяет горячие клавиши (A — альбомный, R / Shift+R — поворот).
 (() => {
   const before = __PDFORIENT__.snapshot();
   const dispatch = (key, shiftKey) =>

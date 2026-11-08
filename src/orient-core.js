@@ -1,10 +1,26 @@
 /*
- * orient-core.js — геометрия смены ориентации PDF-страниц.
+ * orient-core.js — «математика» смены ориентации: от рамки содержимого до готовой PDF-страницы.
  *
- * Работает и в браузере (window.OrientCore, глобал PDFLib), и в Node (require('pdf-lib')).
- * Ничего не рисует: только считает матрицы и переписывает страницы через pdf-lib.
+ * Модуль намеренно не зависит от DOM, интерфейса и pdf.js:
+ *   вход  — документ pdf-lib + настройки страницы (bbox, размер листа, угол, режим масштаба, поля);
+ *   выход — та же страница, но содержимое обёрнуто в матрицу преобразования, а MediaBox/CropBox
+ *           заменены на новый лист. Векторы и шрифты не пересжимаются.
  *
- * Единицы — типографские пункты (1/72 дюйма), как в PDF.
+ * Системы координат и соглашения:
+ *   • PDF: начало координат в левом нижнем углу страницы, ось Y вверх, единицы — пункты (1/72 дюйма).
+ *   • bbox — рамка видимого содержимого в СЫРЫХ координатах страницы, то есть без учёта /Rotate.
+ *     Влияние /Rotate отдельно компенсирует bakeRotate(): после сброса /Rotate страница
+ *     должна выглядеть так же, как выглядела раньше.
+ *   • Все углы — в градусах ПРОТИВ часовой стрелки (0/90/180/270).
+ *   • Матрица PDF записывается шестью числами [a b c d e f] и действует как
+ *     x' = a*x + c*y + e, y' = b*x + d*y + f.
+ *
+ * Итоговое преобразование страницы: M = T(tx,ty) · S(scale) · R(rotate) · T(-x0,-y0),
+ * то есть сначала bbox сдвигается в начало координат, затем масштабируется, поворачивается
+ * и центрируется на новом листе. Подробности — в computePlacement().
+ *
+ * UMD-обёртка ниже позволяет использовать один и тот же код в браузере (window.OrientCore)
+ * и в Node-тестах (require('pdf-lib') или локальный vendor/pdf-lib.min.js).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -21,10 +37,11 @@
 })(typeof self !== 'undefined' ? self : this, function (PDFLib) {
   'use strict';
 
-  const MM = 72 / 25.4; // миллиметры -> пункты
-  const PDFName = PDFLib.PDFName;
+  const MM = 72 / 25.4; // миллиметры -> пункты (1 мм = 2.8346 pt)
+  const PDFName = PDFLib.PDFName; // имена ключей PDF-словарей (/MediaBox, /Rotate, ...)
 
   // Стандартные размеры листа в пунктах (ширина x высота, книжная ориентация).
+  // Альбомный вариант получается перестановкой width/height.
   const PAPER = {
     A3: { width: 841.89, height: 1190.55 },
     A4: { width: 595.28, height: 841.89 },
@@ -32,13 +49,15 @@
     Letter: { width: 612.0, height: 792.0 },
   };
 
+  // Приводит любой угол к диапазону 0..359 и к целым градусам (90/180/270).
   const normAngle = (deg) => {
     const d = Math.round(Number(deg) || 0);
     return ((d % 360) + 360) % 360;
   };
 
-  // Поворот содержимого в градусах против часовой стрелки,
-  // который нужно применить, чтобы после сброса /Rotate страница выглядела как раньше.
+  // Поворот содержимого в градусах ПРОТИВ часовой стрелки, который компенсирует /Rotate.
+  // /Rotate = 90 означает «показывать страницу повёрнутой на 90° по часовой стрелке»,
+  // поэтому содержимому нужно +270° против часовой, чтобы картинка осталась прежней.
   const bakeRotate = (pageRotate) => normAngle(360 - normAngle(pageRotate));
 
   /**
@@ -63,6 +82,8 @@
     const w = Math.max(0.01, Number(bbox.x1) - x0);
     const h = Math.max(0.01, Number(bbox.y1) - y0);
 
+    // После поворота на 90/270 габариты содержимого меняются местами (w↔h):
+    // именно они должны вписываться в новый лист.
     const swap = rotate === 90 || rotate === 270;
     const cw = swap ? h : w; // габариты содержимого после поворота
     const ch = swap ? w : h;
@@ -70,6 +91,10 @@
     const availW = Math.max(0.5, W - 2 * margin);
     const availH = Math.max(0.5, H - 2 * margin);
 
+    // Коэффициент масштабирования содержимого:
+    //   contain — вписать целиком (берём меньший из двух коэффициентов),
+    //   width   — заполнить по ширине (по высоте может обрезаться — это подсвечивается в UI),
+    //   none    — 1:1, без изменения размера.
     let scale;
     if (fit === 'none') scale = 1;
     else if (fit === 'width') scale = availW / cw;
@@ -79,6 +104,8 @@
     const sin = Math.sin((rotate * Math.PI) / 180);
 
     // Куда встанет повёрнутое содержимое (до центрирования): углы (0,0)..(w,h).
+    // После поворота вокруг начала координат часть точек уходит в минус,
+    // поэтому находим минимум — на него потом сдвигаем, чтобы содержимое легло в [0..cw]×[0..ch].
     let minx = Infinity;
     let miny = Infinity;
     for (const [u, v] of [[0, 0], [w, 0], [0, h], [w, h]]) {
@@ -90,12 +117,14 @@
       if (ry < miny) miny = ry;
     }
 
+    // Центрируем повёрнутое содержимое на листе с учётом полей.
     const left = (W - cw * scale) / 2;
     const bottom = (H - ch * scale) / 2;
     const tx = left - minx;
     const ty = bottom - miny;
 
     // M = T(tx,ty) · S(scale) · R(rotate) · T(-x0,-y0)
+    // Раскрываем в шесть чисел PDF: сначала сдвиг bbox в ноль, затем масштаб, поворот и перенос.
     const a = scale * cos;
     const b = scale * sin;
     const c = -scale * sin;
@@ -129,23 +158,34 @@
   /**
    * Переписывает одну страницу: сбрасывает /Rotate, подставляет матрицу
    * к содержимому и задаёт новый размер листа.
+   *
+   * Содержимое PDF не пересобирается по объектам: мы оборачиваем существующие
+   * content-стримы в пару операторов `q <матрица> cm` … `Q`. Это стандартный
+   * способ задать общее преобразование для всей страницы, не трогая шрифты,
+   * картинки и векторные объекты.
    */
   function applyPlacement(doc, page, placement) {
+    // 1. Приводим /Contents к массиву стримов: так их проще дополнить.
     page.node.normalize();
 
     const [a, b, c, d, e, f] = placement.matrix;
+    // Числа в content-стрим пишем с фиксированной точностью, чтобы не ловить
+    // экспоненциальную запись и «-0» в PDF.
     const m = (n) => (Math.abs(n) < 1e-9 ? '0' : String(Number(n.toFixed(6))));
     const prefix = doc.context.stream('q\n' + [a, b, c, d, e, f].map(m).join(' ') + ' cm\n');
     const suffix = doc.context.stream('\nQ\n');
 
-    // У пустой страницы может не быть /Contents — создаём пустой массив.
+    // 2. У пустой страницы может не быть /Contents — создаём пустой массив.
     if (!page.node.Contents()) {
       page.node.set(PDFName.of('Contents'), doc.context.obj([]));
     }
 
+    // 3. Вставляем «q матрица cm» в начало и «Q» в конец списка стримов.
     const ok = page.node.wrapContentStreams(doc.context.register(prefix), doc.context.register(suffix));
     if (!ok) throw new Error('Не удалось обернуть содержимое страницы (Contents не массив).');
 
+    // 4. Меняем лист: все рамки страницы приводим к новому размеру.
+    //    Иначе Acrobat/просмотрщик может обрезать содержимое по старому CropBox.
     page.setMediaBox(0, 0, placement.pageWidth, placement.pageHeight);
     page.setCropBox(0, 0, placement.pageWidth, placement.pageHeight);
     // Прочие рамки, если они были, тоже приводим к новому листу, иначе печать может обрезать.
@@ -153,13 +193,14 @@
     if (node.BleedBox && node.BleedBox()) page.setBleedBox(0, 0, placement.pageWidth, placement.pageHeight);
     if (node.TrimBox && node.TrimBox()) page.setTrimBox(0, 0, placement.pageWidth, placement.pageHeight);
     if (node.ArtBox && node.ArtBox()) page.setArtBox(0, 0, placement.pageWidth, placement.pageHeight);
+    // /Rotate уже «запечён» в матрицу — сбрасываем, чтобы не применился дважды.
     page.setRotation(PDFLib.degrees(0));
 
-    // Аннотации (штампы, ссылки, поля) — хотя бы переставляем их рамки.
+    // 5. Аннотации (штампы, ссылки, поля) — переставляем их рамки/точки той же матрицей.
     try {
       transformAnnotationRects(doc, page, placement.matrix);
     } catch (err) {
-      // не критично для печати
+      // Аннотации не критичны для печати: если структура нестандартная, просто пропускаем.
     }
     return placement;
   }
@@ -259,6 +300,29 @@
     });
   }
 
+  /**
+   * Безопасное имя файла для скачивания и записей ZIP.
+   *
+   * Убирает управляющие символы, разделители путей и зарезервированные в Windows
+   * символы. Это защита от «zip-slip» (запись за пределы папки при распаковке)
+   * и от подмены расширения: имя приходит из файла пользователя и ему доверять нельзя.
+   *
+   * @param {string} name исходное имя (может быть с путём или мусором)
+   * @param {string} [fallback] что вернуть, если после очистки ничего не осталось
+   * @returns {string}
+   */
+  function safeFileName(name, fallback) {
+    const cleaned = String(name == null ? '' : name)
+      .replace(/[\u0000-\u001f\u007f]/g, '') // управляющие символы
+      .replace(/[\\/:*?"<>|]/g, ' ') // разделители путей и запрещённые в Windows символы
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^[.\s]+/, '') // ни «..», ни скрытых файлов в начале имени
+      .trim()
+      .slice(0, 120);
+    return cleaned || fallback || 'document';
+  }
+
   return {
     MM,
     PAPER,
@@ -268,5 +332,6 @@
     pageViewRect,
     applyPlacement,
     applyToDocument,
+    safeFileName,
   };
 });

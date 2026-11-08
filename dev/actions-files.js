@@ -1,3 +1,4 @@
+// Действие для сквозного теста: переключение между файлами и удаление одного из них.
 (async () => {
   const s0 = __PDFORIENT__.snapshot();
   const switched = __PDFORIENT__.switchFile(1);

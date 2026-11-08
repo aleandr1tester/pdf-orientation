@@ -31,3 +31,6 @@ jobs:
 
       - name: Пустая страница и аннотации
         run: node dev/test-annot.js
+
+      - name: Проверки безопасности (CSP, отсутствие сети, санитайзер имён)
+        run: node dev/test-security.js

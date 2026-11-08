@@ -1,3 +1,4 @@
+// Действие для сквозного теста: возвращает итоговые размеры страниц после конвертации.
 (async () => {
   const snapshot = __PDFORIENT__.snapshot();
   const sizes = await __PDFORIENT__.resultPageSizes();
