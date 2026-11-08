@@ -2,7 +2,7 @@
 // Запуск: node dev/make-demo.js
 const fs = require('fs');
 const path = require('path');
-const { PDFDocument, StandardFonts, rgb } = require('../vendor/pdf-lib.min.js');
+const { PDFDocument, StandardFonts, rgb, degrees } = require('../vendor/pdf-lib.min.js');
 const core = require('../src/orient-core.js');
 
 const OUT = path.join(__dirname, 'fixtures');
@@ -145,6 +145,24 @@ async function buildBook(album, name) {
   return { doc: book, bbox: { x0: 0, y0: core.PAPER.A4.height - drawH, x1: drawW, y1: core.PAPER.A4.height } };
 }
 
+// «Боком»: книжная страница, но текст повёрнут на 90° (кривой экспорт/скан с текстовым слоем).
+async function buildSideways() {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([core.PAPER.A4.width, core.PAPER.A4.height]); // 595 x 842
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  page.drawText('ROTATED PAGE', {
+    x: 90, y: 700, size: 30, font: bold, rotate: degrees(90),
+  });
+  for (let i = 0; i < 6; i++) {
+    page.drawText('Sideways text line ' + (i + 1) + ' — the app should rotate this page automatically', {
+      x: 120 + i * 70, y: 120, size: 12, font, rotate: degrees(90),
+    });
+  }
+  return doc;
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
 
@@ -166,6 +184,9 @@ async function buildBook(album, name) {
   mixed.addPage((await mixed.copyPages(album, [0]))[0]);
   mixed.addPage((await mixed.copyPages(book.doc, [0]))[0]);
   fs.writeFileSync(path.join(OUT, 'mixed.pdf'), await mixed.save());
+
+  const sideways = await buildSideways();
+  fs.writeFileSync(path.join(OUT, 'sideways.pdf'), await sideways.save());
 
   console.log('fixtures готовы:', fs.readdirSync(OUT).join(', '));
   console.log('bbox книжной страницы:', book.bbox);

@@ -81,6 +81,7 @@
     cropCheck: $('cropCheck'),
     batchField: $('batchField'),
     batchAllCheck: $('batchAllCheck'),
+    autoRotateCheck: $('autoRotateCheck'),
     fileInput: $('fileInput'),
     toasts: $('toasts'),
     btnDownload: $('btnDownload'),
@@ -236,8 +237,9 @@
     const bw = page.bbox.x1 - page.bbox.x0;
     const bh = page.bbox.y1 - page.bbox.y0;
     if (bw <= 1 || bh <= 1) return null;
-    // сравниваем с тем, как содержимое выглядит на экране (с учётом /Rotate)
-    const swap = page.pdfRotate === 90 || page.pdfRotate === 270;
+    // как содержимое будет выглядеть после всех поворотов
+    const totalRot = norm(page.rotate + core.bakeRotate(page.pdfRotate || 0));
+    const swap = totalRot === 90 || totalRot === 270;
     const contentAspect = swap ? bh / bw : bw / bh;
     const pageAspect = page.origW / page.origH;
     if (pageAspect < 1 && contentAspect > 1.12) {
@@ -259,6 +261,46 @@
       return 'portrait';
     }
     return null;
+  }
+
+  // Направление текста на странице (в сырых координатах, без /Rotate): 0/90/180/270.
+  async function detectTextAngle(pdfPage) {
+    let items = [];
+    try {
+      const tc = await pdfPage.getTextContent();
+      items = tc.items || [];
+    } catch (e) {
+      return { angle: 0, confidence: 0, weight: 0 };
+    }
+
+    let sx = 0;
+    let sy = 0;
+    let weight = 0;
+    const samples = [];
+    for (const item of items) {
+      const str = (item.str || '').trim();
+      if (!str || !item.transform) continue;
+      const a = item.transform[0];
+      const b = item.transform[1];
+      if (!isFinite(a) || !isFinite(b) || (Math.abs(a) < 1e-6 && Math.abs(b) < 1e-6)) continue;
+      const len = Math.min(str.length, 80);
+      const ang = (Math.atan2(b, a) * 180) / Math.PI;
+      sx += Math.cos((ang * Math.PI) / 180) * len;
+      sy += Math.sin((ang * Math.PI) / 180) * len;
+      samples.push({ ang: ang, len: len });
+      weight += len;
+    }
+    if (!weight) return { angle: 0, confidence: 0, weight: 0 };
+
+    const avg = (Math.atan2(sy, sx) * 180) / Math.PI;
+    const quarter = Math.round(avg / 90);
+    const angle = norm(quarter * 90);
+    let matched = 0;
+    for (const sample of samples) {
+      const delta = Math.abs((((((sample.ang - quarter * 90 + 540) % 360) + 360) % 360) - 180));
+      if (delta < 22) matched += sample.len;
+    }
+    return { angle: angle, confidence: matched / weight, weight: weight };
   }
 
   /* ---------- загрузка ---------- */
@@ -364,6 +406,7 @@
       pages: pages,
       selected: new Set(pages.map((p) => p.index)),
       autoApplied: pages.filter((p) => p.auto).length,
+      autoRotated: pages.filter((p) => p.autoRotate).length,
     };
   }
 
@@ -488,16 +531,30 @@
 
   function updateBanner() {
     const doc = state.doc;
-    if (!doc || !doc.autoApplied) {
+    const preset = doc ? doc.autoApplied : 0;
+    const rotated = doc ? doc.autoRotated : 0;
+    if (!doc || (!preset && !rotated)) {
       els.autoBanner.classList.remove('is-visible');
       return;
     }
-    const n = doc.autoApplied;
+    const parts = [];
+    if (preset) {
+      parts.push(
+        preset === 1
+          ? 'Страница свёрстана широко, а лист был книжный — развернул её на альбомный лист.'
+          : preset + ' страницы свёрстаны широко — развернул их на альбомный лист.'
+      );
+    }
+    if (rotated) {
+      parts.push(
+        rotated === 1
+          ? 'Ещё одна страница была с повёрнутым текстом — развернул её.'
+          : 'Ещё ' + rotated + ' страницы были с повёрнутым текстом — развернул их.'
+      );
+    }
     els.autoBannerText.innerHTML =
       '<b>Готово к печати.</b> ' +
-      (n === 1
-        ? 'Страница свёрстана широко, а лист был книжный — развернул её на альбомный лист.'
-        : n + ' страницы свёрстаны широко — развернул их на альбомный лист.') +
+      parts.join(' ') +
       (state.files.length > 1 ? ' Файл «' + escapeHtml(doc.name) + '».' : '') +
       ' Проверьте предпросмотр.';
     els.autoBanner.classList.add('is-visible');
@@ -593,6 +650,8 @@
     tctx.imageSmoothingQuality = 'high';
     tctx.drawImage(canvas, 0, 0, thumb.width, thumb.height);
 
+    const textInfo = await detectTextAngle(pdfPage);
+
     if (pdfPage.cleanup) pdfPage.cleanup();
 
     const page = {
@@ -611,7 +670,27 @@
       margin: 0,
       crop: false,
       auto: null,
+      autoRotate: null,
+      textAngle: textInfo.angle,
+      textConfidence: +textInfo.confidence.toFixed(3),
     };
+
+    // Автоповорот: если текст на странице повёрнут, разворачиваем содержимое.
+    const autoRotateOn = !els.autoRotateCheck || els.autoRotateCheck.checked;
+    if (autoRotateOn && textInfo.weight >= 20 && textInfo.confidence >= 0.7) {
+      const bake = core.bakeRotate(page.pdfRotate || 0);
+      // как текст выглядит сейчас на экране, с учётом /Rotate
+      const needed = norm(-(textInfo.angle + bake));
+      if (needed !== 0) {
+        page.rotate = needed;
+        if (needed % 180 === 90) {
+          const w = page.sheetW;
+          page.sheetW = page.sheetH;
+          page.sheetH = w;
+        }
+        page.autoRotate = needed;
+      }
+    }
 
     page.auto = autoPreset(page);
     return page;
@@ -1064,6 +1143,14 @@
       toast('Настройки будут применяться ко всем файлам');
     });
 
+    els.autoRotateCheck.addEventListener('change', () => {
+      if (els.autoRotateCheck.checked) {
+        toast('Автоповорот включён — сработает для вновь открываемых файлов');
+      } else {
+        toast('Автоповорот выключен — страницы останутся как есть');
+      }
+    });
+
     els.btnSelectAll.addEventListener('click', () => {
       const all = state.selected.size === state.pages.length;
       selectAll(!all);
@@ -1159,6 +1246,9 @@
           y1: +p.bbox.y1.toFixed(2),
         },
         auto: p.auto,
+        autoRotate: p.autoRotate,
+        textAngle: p.textAngle,
+        textConfidence: p.textConfidence,
         sheetW: +p.sheetW.toFixed(2),
         sheetH: +p.sheetH.toFixed(2),
         fit: p.fit,
