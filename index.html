@@ -1278,35 +1278,64 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     };
   }
 
-  // Автоподбор: широкий бланк на книжном листе -> альбомный A4, и наоборот.
+  // Автоподбор: меняет ориентацию листа, только если это заметно увеличит содержимое
+  // и содержимое занимает существенную часть страницы.
   function autoPreset(page) {
     const bw = page.bbox.x1 - page.bbox.x0;
     const bh = page.bbox.y1 - page.bbox.y0;
-    if (bw <= 1 || bh <= 1) return null;
+    const viewW = page.view.x1 - page.view.x0;
+    const viewH = page.view.y1 - page.view.y0;
+    if (bw <= 1 || bh <= 1 || !viewW || !viewH) return null;
+
     // как содержимое будет выглядеть после всех поворотов
     const totalRot = norm(page.rotate + core.bakeRotate(page.pdfRotate || 0));
     const swap = totalRot === 90 || totalRot === 270;
     const contentAspect = swap ? bh / bw : bw / bh;
-    const pageAspect = page.origW / page.origH;
-    if (pageAspect < 1 && contentAspect > 1.12) {
-      const sheet = sheetFor(page, 'landscape', 'auto');
-      page.sheetW = sheet.width;
-      page.sheetH = sheet.height;
+    const currentLandscape = page.sheetW > page.sheetH;
+    const desired = contentAspect > 1.05 ? 'landscape' : contentAspect < 0.95 ? 'portrait' : null;
+
+    let result = null;
+    if (desired && desired !== (currentLandscape ? 'landscape' : 'portrait')) {
+      const sheet = sheetFor(page, desired, 'auto');
+      const currentScale = core.computePlacement(page.bbox, {
+        pageWidth: page.sheetW,
+        pageHeight: page.sheetH,
+        rotate: totalRot,
+        fit: 'contain',
+        margin: 0,
+      }).scale;
+      const targetScale = core.computePlacement(page.bbox, {
+        pageWidth: sheet.width,
+        pageHeight: sheet.height,
+        rotate: totalRot,
+        fit: 'contain',
+        margin: 5 * MM,
+      }).scale;
+      const gain = targetScale / currentScale;
+      // «сжатый широкий бланк» занимает всю ширину листа, но не всю высоту
+      const wFill = bw / viewW;
+      const hFill = bh / viewH;
+      const looksSqueezed =
+        desired === 'landscape' ? wFill >= 0.85 && hFill <= 0.8 : hFill >= 0.85 && wFill <= 0.8;
+
+      if (gain >= 1.08 && looksSqueezed) {
+        page.sheetW = sheet.width;
+        page.sheetH = sheet.height;
+        page.fit = 'contain';
+        page.margin = 5 * MM;
+        page.crop = true;
+        result = desired;
+      }
+    }
+
+    // страницу, которую мы только что развернули, полезно сразу вписать в лист
+    if (page.autoRotate) {
       page.fit = 'contain';
       page.margin = 5 * MM;
       page.crop = true;
-      return 'landscape';
     }
-    if (pageAspect > 1 && contentAspect < 0.89) {
-      const sheet = sheetFor(page, 'portrait', 'auto');
-      page.sheetW = sheet.width;
-      page.sheetH = sheet.height;
-      page.fit = 'contain';
-      page.margin = 5 * MM;
-      page.crop = true;
-      return 'portrait';
-    }
-    return null;
+
+    return result;
   }
 
   // Направление текста на странице (в сырых координатах, без /Rotate): 0/90/180/270.

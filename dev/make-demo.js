@@ -163,6 +163,51 @@ async function buildSideways() {
   return doc;
 }
 
+// Обычный портретный документ — автоподбор не должен его трогать.
+async function buildNormalPortrait() {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([core.PAPER.A4.width, core.PAPER.A4.height]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  page.drawText('Project status report', { x: 60, y: 770, size: 20, font: bold });
+  const lines = [
+    'This is a regular portrait document. It has a title, a few paragraphs',
+    'of text and a small table. The content is narrower than the page, so',
+    'there is no reason to rotate anything: the app should leave it as is.',
+    'A wide image or a short banner does not make a document landscape.',
+  ];
+  lines.forEach((line, i) => {
+    page.drawText(line, { x: 60, y: 720 - i * 22, size: 11, font });
+  });
+
+  const x0 = 60;
+  const widths = [40, 220, 70, 70];
+  const xs = [x0];
+  for (const w of widths) xs.push(xs[xs.length - 1] + w);
+  const top = 600;
+  const rowH = 26;
+  for (let i = 0; i < 5; i++) {
+    const y = top - i * rowH;
+    page.drawLine({ start: { x: x0, y: y }, end: { x: xs[xs.length - 1], y: y }, thickness: 0.6, color: LINE });
+  }
+  for (const x of xs) {
+    page.drawLine({ start: { x: x, y: top }, end: { x: x, y: top - 4 * rowH }, thickness: 0.6, color: LINE });
+  }
+  page.drawText('Item', { x: x0 + 5, y: top - 18, size: 9, font: bold });
+  page.drawText('Description', { x: xs[1] + 5, y: top - 18, size: 9, font: bold });
+  page.drawText('Qty', { x: xs[2] + 5, y: top - 18, size: 9, font: bold });
+  page.drawText('Price', { x: xs[3] + 5, y: top - 18, size: 9, font: bold });
+  for (let i = 0; i < 3; i++) {
+    const y = top - rowH * (i + 1) - 18;
+    page.drawText(String(i + 1), { x: x0 + 5, y, size: 9, font });
+    page.drawText('Regular line item ' + (i + 1), { x: xs[1] + 5, y, size: 9, font });
+    page.drawText(String(i + 1), { x: xs[2] + 5, y, size: 9, font });
+    page.drawText((10 + i * 5).toFixed(2), { x: xs[3] + 5, y, size: 9, font });
+  }
+  return doc;
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
 
@@ -187,6 +232,9 @@ async function buildSideways() {
 
   const sideways = await buildSideways();
   fs.writeFileSync(path.join(OUT, 'sideways.pdf'), await sideways.save());
+
+  const normal = await buildNormalPortrait();
+  fs.writeFileSync(path.join(OUT, 'normal-portrait.pdf'), await normal.save());
 
   console.log('fixtures готовы:', fs.readdirSync(OUT).join(', '));
   console.log('bbox книжной страницы:', book.bbox);
