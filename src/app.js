@@ -23,14 +23,38 @@
   }
 
   /* ---------- состояние ---------- */
+  // В приложении может быть несколько файлов; активный файл — state.doc.
   const state = {
-    fileName: '',
-    bytes: null,
-    pdfjs: null,
-    pages: [],
-    selected: new Set(),
+    files: [],
+    active: -1,
     busy: false,
-    autoApplied: 0,
+    get doc() {
+      return this.files[this.active] || null;
+    },
+    get pages() {
+      return this.doc ? this.doc.pages : [];
+    },
+    get selected() {
+      return this.doc ? this.doc.selected : new Set();
+    },
+    set selected(value) {
+      if (this.doc) this.doc.selected = value;
+    },
+    get bytes() {
+      return this.doc ? this.doc.bytes : null;
+    },
+    get pdfjs() {
+      return this.doc ? this.doc.pdfjs : null;
+    },
+    get fileName() {
+      return this.doc ? this.doc.name : '';
+    },
+    get autoApplied() {
+      return this.doc ? this.doc.autoApplied : 0;
+    },
+    set autoApplied(value) {
+      if (this.doc) this.doc.autoApplied = value;
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -45,6 +69,7 @@
     workspace: $('workspace'),
     autoBanner: $('autoBanner'),
     autoBannerText: $('autoBannerText'),
+    fileStrip: $('fileStrip'),
     fileName: $('fileName'),
     fileSub: $('fileSub'),
     pagesGrid: $('pagesGrid'),
@@ -54,9 +79,12 @@
     fitSelect: $('fitSelect'),
     marginInput: $('marginInput'),
     cropCheck: $('cropCheck'),
+    batchField: $('batchField'),
+    batchAllCheck: $('batchAllCheck'),
     fileInput: $('fileInput'),
     toasts: $('toasts'),
     btnDownload: $('btnDownload'),
+    btnZip: $('btnZip'),
     btnPreviewResult: $('btnPreviewResult'),
     btnSelectAll: $('btnSelectAll'),
     btnReset: $('btnReset'),
@@ -243,88 +271,236 @@
       toast('Нужен PDF-файл', 'error');
       return;
     }
-    if (files.length > 1) toast('Открываю первый файл из ' + files.length);
-    await loadPdf(files[0]);
+    await addFiles(files);
   }
 
-  async function loadPdf(file) {
+  async function addFiles(files) {
     state.busy = true;
+    const startIndex = state.files.length;
     try {
-      showLoading('Открываю документ…', file.name);
-      if (state.pdfjs) {
-        try { state.pdfjs.destroy(); } catch (e) {}
-        state.pdfjs = null;
-      }
-      state.pages = [];
-      state.selected = new Set();
-      state.autoApplied = 0;
-      els.pagesGrid.innerHTML = '';
-      els.autoBanner.classList.remove('is-visible');
+      showLoading(
+        files.length > 1 ? 'Открываю файлы…' : 'Открываю документ…',
+        files.length > 1 ? files.length + ' файла, всё локально' : files[0].name
+      );
+      setProgress(files.length > 1 ? 0 : null);
 
-      const buf = await file.arrayBuffer();
-      state.bytes = new Uint8Array(buf);
-      state.fileName = file.name;
-
-      // 1. Проверяем pdf.js (он же рендерит превью)
-      let pdf;
-      try {
-        pdf = await pdfjsLib.getDocument({
-          data: state.bytes.slice(),
-          useSystemFonts: true,
-          isEvalSupported: false,
-        }).promise;
-      } catch (err) {
-        throw friendlyPdfError(err);
-      }
-      state.pdfjs = pdf;
-
-      // pdf-lib нужен, чтобы понять, сможем ли мы переписать файл
-      try {
-        await PDFDocument.load(state.bytes, { updateMetadata: false });
-      } catch (err) {
-        throw friendlyPdfError(err);
+      for (let fi = 0; fi < files.length; fi++) {
+        const file = files[fi];
+        try {
+          const loaded = await loadOneFile(file, (pageIndex, pageCount) => {
+            if (files.length > 1) {
+              setProgress((fi + (pageIndex + 0.5) / pageCount) / files.length);
+              els.loadingSub.textContent =
+                'Файл ' + (fi + 1) + ' из ' + files.length + ' · ' + file.name;
+            } else {
+              setProgress((pageIndex + 0.5) / pageCount);
+              els.loadingSub.textContent = 'Разбираю страницу ' + (pageIndex + 1) + ' из ' + pageCount;
+            }
+          });
+          state.files.push(loaded);
+        } catch (err) {
+          console.error(err);
+          toast(
+            (err && err.userMessage ? err.userMessage : 'Не получилось открыть файл') +
+              ' — «' + file.name + '» пропущен',
+            'error'
+          );
+        }
       }
 
-      const count = pdf.numPages;
-      setProgress(0);
-      for (let i = 0; i < count; i++) {
-        els.loadingSub.textContent = 'Разбираю страницу ' + (i + 1) + ' из ' + count;
-        const page = await analysePage(pdf, i);
-        state.pages.push(page);
-        state.selected.add(page.index);
-        buildCard(page);
-        setProgress((i + 1) / count);
+      if (!state.files.length) {
+        hideLoading();
+        els.dropzoneSection.style.display = '';
+        els.workspace.classList.remove('is-active');
+        return;
       }
 
-      els.fileName.textContent = file.name;
-      els.fileSub.textContent = count === 1 ? '1 страница' : count + ' страниц';
-
-      hideLoading();
+      state.active = startIndex < state.files.length ? startIndex : state.files.length - 1;
       els.dropzoneSection.style.display = 'none';
       els.workspace.classList.add('is-active');
-
-      syncControlsFromSelection();
-      updateAllCards();
-
-      if (state.autoApplied > 0) {
-        const n = state.autoApplied;
-        els.autoBannerText.innerHTML =
-          '<b>Готово к печати.</b> ' +
-          (n === 1
-            ? 'Страница свёрстана широко, а лист был книжный — развернул её на альбомный лист.'
-            : n + ' страницы свёрстаны широко — развернул их на альбомный лист.') +
-          ' Проверьте предпросмотр.';
-        els.autoBanner.classList.add('is-visible');
-      }
-    } catch (err) {
-      console.error(err);
       hideLoading();
-      els.dropzoneSection.style.display = '';
-      els.workspace.classList.remove('is-active');
-      toast(err && err.userMessage ? err.userMessage : 'Не получилось открыть файл: ' + (err && err.message), 'error');
+      renderActiveFile();
     } finally {
       state.busy = false;
     }
+  }
+
+  async function loadOneFile(file, onPageProgress) {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+
+    // 1. pdf.js — предпросмотр и границы содержимого
+    let pdf;
+    try {
+      pdf = await pdfjsLib.getDocument({
+        data: bytes.slice(),
+        useSystemFonts: true,
+        isEvalSupported: false,
+      }).promise;
+    } catch (err) {
+      throw friendlyPdfError(err);
+    }
+
+    // 2. pdf-lib — проверим, что файл вообще можно пересобрать
+    try {
+      await PDFDocument.load(bytes, { updateMetadata: false });
+    } catch (err) {
+      try { await pdf.destroy(); } catch (e) {}
+      throw friendlyPdfError(err);
+    }
+
+    const pages = [];
+    const count = pdf.numPages;
+    for (let i = 0; i < count; i++) {
+      if (onPageProgress) onPageProgress(i, count);
+      pages.push(await analysePage(pdf, i));
+    }
+
+    return {
+      name: file.name,
+      size: file.size,
+      bytes: bytes,
+      pdfjs: pdf,
+      pages: pages,
+      selected: new Set(pages.map((p) => p.index)),
+      autoApplied: pages.filter((p) => p.auto).length,
+    };
+  }
+
+  function pageCountLabel(doc) {
+    const pages = doc.pages.length;
+    const base = pages === 1 ? '1 страница' : pages + ' страниц';
+    if (state.files.length < 2) return base;
+    return base + ' · файл ' + (state.active + 1) + ' из ' + state.files.length;
+  }
+
+  function changedInFile(doc) {
+    return doc.pages.filter(isChanged).length;
+  }
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
+  }
+
+  /* ---------- активный файл и полоса файлов ---------- */
+  function renderActiveFile() {
+    const doc = state.doc;
+    if (!doc) return;
+
+    els.pagesGrid.innerHTML = '';
+    for (const page of doc.pages) buildCard(page);
+
+    els.fileName.textContent = doc.name;
+    els.fileSub.textContent = pageCountLabel(doc);
+    els.batchField.hidden = state.files.length < 2;
+    els.btnZip.hidden = state.files.length < 2;
+
+    renderFileStrip();
+    updateBanner();
+    syncControlsFromSelection();
+    updateAllCards();
+  }
+
+  function renderFileStrip() {
+    if (state.files.length < 2) {
+      els.fileStrip.hidden = true;
+      els.fileStrip.textContent = '';
+      return;
+    }
+    els.fileStrip.hidden = false;
+    els.fileStrip.textContent = '';
+
+    state.files.forEach((doc, index) => {
+      const chip = document.createElement('div');
+      chip.className = 'file-chip' + (index === state.active ? ' is-active' : '');
+      chip.tabIndex = 0;
+      chip.setAttribute('role', 'button');
+      chip.title = doc.name;
+
+      const name = document.createElement('span');
+      name.className = 'chip-name';
+      name.textContent = doc.name;
+      chip.appendChild(name);
+
+      const meta = document.createElement('span');
+      meta.className = 'chip-meta';
+      meta.textContent = doc.pages.length === 1 ? '1 стр.' : doc.pages.length + ' стр.';
+      if (changedInFile(doc)) {
+        meta.appendChild(document.createTextNode(' · '));
+        const b = document.createElement('b');
+        b.textContent = 'изменён';
+        meta.appendChild(b);
+      }
+      chip.appendChild(meta);
+
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'chip-close';
+      close.title = 'Убрать файл';
+      close.setAttribute('aria-label', 'Убрать файл ' + doc.name);
+      close.textContent = '×';
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeFile(index);
+      });
+      chip.appendChild(close);
+
+      chip.addEventListener('click', () => switchFile(index));
+      chip.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          switchFile(index);
+        }
+      });
+
+      els.fileStrip.appendChild(chip);
+    });
+  }
+
+  function switchFile(index) {
+    if (index === state.active || !state.files[index]) return;
+    state.active = index;
+    renderActiveFile();
+  }
+
+  function removeFile(index) {
+    const doc = state.files[index];
+    if (!doc) return;
+    try { doc.pdfjs && doc.pdfjs.destroy(); } catch (e) {}
+    state.files.splice(index, 1);
+
+    if (!state.files.length) {
+      state.active = -1;
+      els.pagesGrid.innerHTML = '';
+      els.workspace.classList.remove('is-active');
+      els.dropzoneSection.style.display = '';
+      els.fileStrip.hidden = true;
+      return;
+    }
+
+    if (state.active >= state.files.length) state.active = state.files.length - 1;
+    else if (state.active > index) state.active -= 1;
+    renderActiveFile();
+    toast('Файл «' + doc.name + '» убран');
+  }
+
+  function updateBanner() {
+    const doc = state.doc;
+    if (!doc || !doc.autoApplied) {
+      els.autoBanner.classList.remove('is-visible');
+      return;
+    }
+    const n = doc.autoApplied;
+    els.autoBannerText.innerHTML =
+      '<b>Готово к печати.</b> ' +
+      (n === 1
+        ? 'Страница свёрстана широко, а лист был книжный — развернул её на альбомный лист.'
+        : n + ' страницы свёрстаны широко — развернул их на альбомный лист.') +
+      (state.files.length > 1 ? ' Файл «' + escapeHtml(doc.name) + '».' : '') +
+      ' Проверьте предпросмотр.';
+    els.autoBanner.classList.add('is-visible');
   }
 
   function friendlyPdfError(err) {
@@ -438,7 +614,6 @@
     };
 
     page.auto = autoPreset(page);
-    if (page.auto) state.autoApplied++;
     return page;
   }
 
@@ -480,7 +655,8 @@
     card.querySelectorAll('.mini button').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        rotatePages([page], Number(btn.dataset.rot));
+        rotateOne(page, Number(btn.dataset.rot));
+        refreshAfterChange();
       });
     });
 
@@ -565,13 +741,21 @@
     }
     const changed = state.pages.filter(isChanged);
     const total = state.pages.length;
-    const active = state.selected.size ? state.selected.size : total;
+    const selectedCount = state.selected.size;
+    const active = selectedCount ? selectedCount : total;
     els.pagesSub.textContent =
       'Предпросмотр результата · ' + (active === 1 ? '1 стр.' : active + ' стр.') +
-      (state.selected.size && state.selected.size !== total ? ' из ' + total : '');
+      (selectedCount && selectedCount !== total ? ' из ' + total : '');
+
+    const totalChanged = state.files.reduce((sum, doc) => sum + doc.pages.filter(isChanged).length, 0);
+    const multi =
+      state.files.length > 1
+        ? ' · всего изменено <b>' + totalChanged + '</b> стр. в ' + state.files.length + ' файлах'
+        : '';
+
     if (!changed.length) {
       els.summaryBox.innerHTML =
-        'Изменений пока нет. Нажмите <b>«Развернуть на альбомный»</b>, если бланк свёрстан широко.';
+        'Изменений пока нет. Нажмите <b>«Развернуть на альбомный»</b>, если бланк свёрстан широко.' + multi;
       els.btnDownload.disabled = false;
       return;
     }
@@ -582,7 +766,8 @@
     const maxRatio = Math.max.apply(null, ratios);
     els.summaryBox.innerHTML =
       'Изменяется <b>' + changed.length + '</b> из ' + total + ' стр. · <b>' + label + '</b>' +
-      (maxRatio > 1.03 ? ' · содержимое крупнее в <b>×' + maxRatio.toFixed(2) + '</b>' : '');
+      (maxRatio > 1.03 ? ' · содержимое крупнее в <b>×' + maxRatio.toFixed(2) + '</b>' : '') +
+      multi;
     els.btnDownload.disabled = false;
   }
 
@@ -592,13 +777,30 @@
     return selected.length ? selected : state.pages;
   }
 
+  // «Применять ко всем файлам»: настройки идут во все документы, а не только в открытый.
+  function batchAll() {
+    return !!(els.batchAllCheck && els.batchAllCheck.checked && state.files.length > 1);
+  }
+
+  function forEachTarget(fn) {
+    if (batchAll()) {
+      state.files.forEach((doc) => doc.pages.forEach((page) => fn(page, doc)));
+      return;
+    }
+    for (const page of targets()) fn(page, state.doc);
+  }
+
+  function refreshAfterChange() {
+    updateAllCards();
+    renderFileStrip();
+  }
+
   function applySheet(orientation) {
-    const pages = targets();
-    if (!pages.length) return;
+    if (!state.pages.length) return;
     const format = els.fmtSelect.value;
     const margin = clamp(Number(els.marginInput.value) || 0, 0, 40) * MM;
     const crop = els.cropCheck.checked;
-    for (const page of pages) {
+    forEachTarget((page) => {
       const sheet = sheetFor(page, orientation, format);
       page.sheetW = sheet.width;
       page.sheetH = sheet.height;
@@ -607,30 +809,28 @@
       page.crop = crop;
       page.rotate = 0;
       page.auto = null;
-    }
-    updateAllCards();
+    });
+    refreshAfterChange();
   }
 
-  function rotatePages(pages, delta) {
-    if (!pages.length) return;
-    for (const page of pages) {
-      page.rotate = norm(page.rotate + delta);
-      // лист поворачиваем вместе с содержимым, чтобы оно осталось вписано
-      const w = page.sheetW;
-      page.sheetW = page.sheetH;
-      page.sheetH = w;
-      if (page.fit === 'none') {
-        // при повороте на 90° 1:1 обычно уже не помещается — вписываем
-        page.fit = 'contain';
-        page.crop = true;
-      }
-      page.auto = null;
+  function rotateOne(page, delta) {
+    page.rotate = norm(page.rotate + delta);
+    // лист поворачиваем вместе с содержимым, чтобы оно осталось вписано
+    const w = page.sheetW;
+    page.sheetW = page.sheetH;
+    page.sheetH = w;
+    if (page.fit === 'none') {
+      // при повороте на 90° 1:1 обычно уже не помещается — вписываем
+      page.fit = 'contain';
+      page.crop = true;
     }
-    updateAllCards();
+    page.auto = null;
   }
 
-  function selectionList(pages) {
-    return pages.map((p) => p.index + 1).join(', ');
+  function rotateTargets(delta) {
+    if (!state.pages.length) return;
+    forEachTarget((page) => rotateOne(page, delta));
+    refreshAfterChange();
   }
 
   function syncControlsFromSelection() {
@@ -644,10 +844,10 @@
   }
 
   function resetTargets() {
-    const pages = targets();
-    for (const page of pages) resetPage(page);
-    updateAllCards();
-    toast('Настройки сброшены');
+    if (!state.pages.length) return;
+    forEachTarget((page) => resetPage(page));
+    refreshAfterChange();
+    toast(batchAll() ? 'Настройки сброшены во всех файлах' : 'Настройки сброшены');
   }
 
   function selectAll(on) {
@@ -657,21 +857,24 @@
   }
 
   /* ---------- сборка результата ---------- */
-  async function buildResult() {
-    const changedPages = state.pages.filter(isChanged);
+  async function buildResult(doc) {
+    const target = doc || state.doc;
+    if (!target) throw new Error('Нет открытого файла');
+    const changedPages = target.pages.filter(isChanged);
     if (!changedPages.length) {
-      return new Blob([state.bytes], { type: 'application/pdf' });
+      return new Blob([target.bytes], { type: 'application/pdf' });
     }
-    const doc = await PDFDocument.load(state.bytes, { updateMetadata: false });
-    const settings = state.pages.map((p) => (isChanged(p) ? effective(p) : null));
-    core.applyToDocument(doc, settings);
-    const bytes = await doc.save();
+    const pdf = await PDFDocument.load(target.bytes, { updateMetadata: false });
+    const settings = target.pages.map((p) => (isChanged(p) ? effective(p) : null));
+    core.applyToDocument(pdf, settings);
+    const bytes = await pdf.save();
     return new Blob([bytes], { type: 'application/pdf' });
   }
 
-  function outputName() {
-    const base = (state.fileName || 'document').replace(/\.pdf$/i, '');
-    const changed = state.pages.filter(isChanged);
+  function outputName(doc) {
+    const target = doc || state.doc;
+    const base = ((target && target.name) || 'document').replace(/\.pdf$/i, '');
+    const changed = target ? target.pages.filter(isChanged) : [];
     if (!changed.length) return base + '.pdf';
     let suffix = ' (изменённый)';
     const landscape = changed.filter((p) => p.sheetW > p.sheetH).length;
@@ -681,29 +884,36 @@
     return base + suffix + '.pdf';
   }
 
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
   function setBusy(on) {
     state.busy = on;
     els.btnDownload.disabled = on;
+    els.btnZip.disabled = on;
     els.btnPreviewResult.disabled = on;
     document.body.style.cursor = on ? 'progress' : '';
   }
 
   async function download() {
-    if (state.busy) return;
+    if (state.busy || !state.doc) return;
     setBusy(true);
     try {
-      const blob = await buildResult();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = outputName();
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      const doc = state.doc;
+      const blob = await buildResult(doc);
+      const name = outputName(doc);
+      saveBlob(blob, name);
       toast(
-        state.pages.some(isChanged)
-          ? 'Готово: ' + outputName() + ' — сохранён'
+        doc.pages.some(isChanged)
+          ? 'Готово: ' + name + ' — сохранён'
           : 'Изменений нет — сохранил исходный файл'
       );
     } catch (err) {
@@ -714,8 +924,41 @@
     }
   }
 
+  async function downloadZip() {
+    if (state.busy || state.files.length < 2) return;
+    setBusy(true);
+    try {
+      const zip = new JSZip();
+      const used = new Set();
+      for (const doc of state.files) {
+        const blob = await buildResult(doc);
+        const baseName = outputName(doc);
+        let name = baseName;
+        let counter = 2;
+        while (used.has(name)) {
+          name = baseName.replace(/\.pdf$/i, ' (' + counter++ + ').pdf');
+        }
+        used.add(name);
+        zip.file(name, blob);
+      }
+      const blob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
+      const name = 'pdf-orientation.zip';
+      saveBlob(blob, name);
+      toast('Готово: ' + state.files.length + ' файла в архиве ' + name);
+    } catch (err) {
+      console.error(err);
+      toast('Не получилось собрать архив: ' + (err && err.message), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function previewResult() {
-    if (state.busy) return;
+    if (state.busy || !state.doc) return;
     const win = window.open('', '_blank');
     if (!win) {
       toast('Разрешите всплывающие окна, чтобы открыть предпросмотр', 'error');
@@ -723,7 +966,7 @@
     }
     setBusy(true);
     try {
-      const blob = await buildResult();
+      const blob = await buildResult(state.doc);
       const url = URL.createObjectURL(blob);
       win.location.href = url;
       setTimeout(() => URL.revokeObjectURL(url), 120000);
@@ -775,42 +1018,50 @@
         if (kind === 'landscape') applySheet('landscape');
         else if (kind === 'portrait') applySheet('portrait');
         else if (kind === 'reset') resetTargets();
-        else if (kind === 'rotate-left') rotatePages(targets(), 90);
-        else if (kind === 'rotate-right') rotatePages(targets(), -90);
+        else if (kind === 'rotate-left') rotateTargets(90);
+        else if (kind === 'rotate-right') rotateTargets(-90);
       });
     });
 
     els.fmtSelect.addEventListener('change', () => {
-      const pages = targets();
-      if (!pages.length) return;
-      const orientation = pages[0].sheetW > pages[0].sheetH ? 'landscape' : 'portrait';
+      if (!state.pages.length) return;
       const value = els.fmtSelect.value;
-      for (const page of pages) {
+      forEachTarget((page) => {
+        const orientation = page.sheetW > page.sheetH ? 'landscape' : 'portrait';
         const sheet = sheetFor(page, orientation, value);
         page.sheetW = sheet.width;
         page.sheetH = sheet.height;
-      }
-      updateAllCards();
+      });
+      refreshAfterChange();
     });
 
     els.fitSelect.addEventListener('change', () => {
-      for (const page of targets()) page.fit = els.fitSelect.value;
-      updateAllCards();
+      forEachTarget((page) => {
+        page.fit = els.fitSelect.value;
+      });
+      refreshAfterChange();
     });
 
     els.marginInput.addEventListener('change', () => {
       const v = clamp(Number(els.marginInput.value) || 0, 0, 40);
       els.marginInput.value = String(v);
-      for (const page of targets()) {
+      forEachTarget((page) => {
         page.margin = v * MM;
         if (v > 0 && page.fit === 'none') page.fit = 'contain';
-      }
-      updateAllCards();
+      });
+      refreshAfterChange();
     });
 
     els.cropCheck.addEventListener('change', () => {
-      for (const page of targets()) page.crop = els.cropCheck.checked;
-      updateAllCards();
+      forEachTarget((page) => {
+        page.crop = els.cropCheck.checked;
+      });
+      refreshAfterChange();
+    });
+
+    els.batchAllCheck.addEventListener('change', () => {
+      if (!batchAll()) return;
+      toast('Настройки будут применяться ко всем файлам');
     });
 
     els.btnSelectAll.addEventListener('click', () => {
@@ -821,11 +1072,16 @@
     els.btnReset.addEventListener('click', resetTargets);
     els.btnOtherFile.addEventListener('click', () => els.fileInput.click());
     els.btnDownload.addEventListener('click', download);
+    els.btnZip.addEventListener('click', downloadZip);
     els.btnPreviewResult.addEventListener('click', previewResult);
     els.btnUndoAuto.addEventListener('click', () => {
-      for (const p of state.pages) resetPage(p);
+      const docs = batchAll() ? state.files : state.doc ? [state.doc] : [];
+      for (const doc of docs) {
+        for (const page of doc.pages) resetPage(page);
+        doc.autoApplied = 0;
+      }
       els.autoBanner.classList.remove('is-visible');
-      updateAllCards();
+      refreshAfterChange();
       toast('Вернул исходную ориентацию');
     });
     els.btnHelp.addEventListener('click', showHelp);
@@ -846,6 +1102,8 @@
       'Белые поля обрезаются, содержимое увеличивается (обычно в 1,4–1,5 раза) и заполняет альбомный A4.</li>' +
       '<li><b>На книжный лист</b> — обратное действие.</li>' +
       '<li><b>Повернуть ↺ / ↻</b> — крутит саму страницу: пригодится для сканов, лежащих боком. Лист при этом меняет ориентацию.</li>' +
+      '<li><b>Несколько файлов</b> — перетащите сразу пачку PDF. С включённой галочкой «Применять ко всем файлам» настройки ' +
+      'применяются ко всей пачке, а <b>Скачать всё (ZIP)</b> отдаёт один архив.</li>' +
       '<li><b>Проверить</b> — открывает готовый файл в новой вкладке, <b>Скачать PDF</b> — сохраняет.</li>' +
       '</ul>' +
       '<p class="muted">Если PDF подписан электронной подписью, после изменения подпись станет недействительной. ' +
@@ -878,56 +1136,91 @@
 
   window.__PDFORIENT__ = {
     async loadBase64(b64, name) {
-      const bytes = b64ToBytes(b64);
-      const file = new File([bytes], name || 'test.pdf', { type: 'application/pdf' });
-      await loadPdf(file);
+      const file = new File([b64ToBytes(b64)], name || 'test.pdf', { type: 'application/pdf' });
+      await addFiles([file]);
       return this.snapshot();
+    },
+    async loadManyBase64(items) {
+      const files = (items || []).map(
+        (it) => new File([b64ToBytes(it.b64)], it.name || 'test.pdf', { type: 'application/pdf' })
+      );
+      await addFiles(files);
+      return this.snapshot();
+    },
+    pageInfo(p, i) {
+      return {
+        i: i + 1,
+        origW: +p.origW.toFixed(2),
+        origH: +p.origH.toFixed(2),
+        bbox: {
+          x0: +p.bbox.x0.toFixed(2),
+          y0: +p.bbox.y0.toFixed(2),
+          x1: +p.bbox.x1.toFixed(2),
+          y1: +p.bbox.y1.toFixed(2),
+        },
+        auto: p.auto,
+        sheetW: +p.sheetW.toFixed(2),
+        sheetH: +p.sheetH.toFixed(2),
+        fit: p.fit,
+        crop: p.crop,
+        rotate: p.rotate,
+        changed: isChanged(p),
+      };
     },
     snapshot() {
       return {
         fileName: state.fileName,
-        pages: state.pages.map((p, i) => ({
-          i: i + 1,
-          origW: +p.origW.toFixed(2),
-          origH: +p.origH.toFixed(2),
-          bbox: {
-            x0: +p.bbox.x0.toFixed(2),
-            y0: +p.bbox.y0.toFixed(2),
-            x1: +p.bbox.x1.toFixed(2),
-            y1: +p.bbox.y1.toFixed(2),
-          },
-          auto: p.auto,
-          sheetW: +p.sheetW.toFixed(2),
-          sheetH: +p.sheetH.toFixed(2),
-          fit: p.fit,
-          crop: p.crop,
-          rotate: p.rotate,
-          changed: isChanged(p),
-          autoApplied: state.autoApplied,
+        active: state.active,
+        autoApplied: state.autoApplied,
+        files: state.files.map((doc, index) => ({
+          name: doc.name,
+          active: index === state.active,
+          pages: doc.pages.map((p, i) => this.pageInfo(p, i)),
         })),
+        pages: state.pages.map((p, i) => this.pageInfo(p, i)),
       };
     },
     preset(kind) {
       if (kind === 'landscape') applySheet('landscape');
       else if (kind === 'portrait') applySheet('portrait');
       else if (kind === 'reset') resetTargets();
-      else if (kind === 'rotate-left') rotatePages(targets(), 90);
-      else if (kind === 'rotate-right') rotatePages(targets(), -90);
+      else if (kind === 'rotate-left') rotateTargets(90);
+      else if (kind === 'rotate-right') rotateTargets(-90);
       return this.snapshot();
     },
-    async convertBase64() {
-      const blob = await buildResult();
+    async convertBase64(fileIndex) {
+      const doc = fileIndex == null ? state.doc : state.files[fileIndex];
+      const blob = await buildResult(doc);
       const buf = new Uint8Array(await blob.arrayBuffer());
       return bytesToB64(buf);
+    },
+    async zipBase64() {
+      const zip = new JSZip();
+      for (const doc of state.files) zip.file(outputName(doc), await buildResult(doc));
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+      return bytesToB64(new Uint8Array(await blob.arrayBuffer()));
     },
     select(ids) {
       state.selected = new Set(ids.map((n) => n - 1));
       updateAllCards();
     },
-    async resultPageSizes() {
-      const blob = await buildResult();
-      const doc = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()), { updateMetadata: false });
-      return doc.getPages().map((p) => ({
+    switchFile(index) {
+      switchFile(index);
+      return this.snapshot();
+    },
+    removeFile(index) {
+      removeFile(index);
+      return this.snapshot();
+    },
+    setBatchAll(on) {
+      els.batchAllCheck.checked = !!on;
+      return this.snapshot();
+    },
+    async resultPageSizes(fileIndex) {
+      const doc = fileIndex == null ? state.doc : state.files[fileIndex];
+      const blob = await buildResult(doc);
+      const pdf = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()), { updateMetadata: false });
+      return pdf.getPages().map((p) => ({
         w: +p.getWidth().toFixed(2),
         h: +p.getHeight().toFixed(2),
         rotate: p.getRotation().angle,

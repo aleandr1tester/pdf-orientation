@@ -139,8 +139,17 @@ class CDP {
 
     const b64 = fs.readFileSync(input).toString('base64');
     const name = path.basename(input);
+    let loadExpression;
+    if (process.env.LOAD_FILES) {
+      const items = process.env.LOAD_FILES.split('|')
+        .filter(Boolean)
+        .map((p) => ({ name: path.basename(p), b64: fs.readFileSync(p).toString('base64') }));
+      loadExpression = `window.__PDFORIENT__.loadManyBase64(${JSON.stringify(items)})`;
+    } else {
+      loadExpression = `window.__PDFORIENT__.loadBase64(${JSON.stringify(b64)}, ${JSON.stringify(name)})`;
+    }
     const snapshot = await s('Runtime.evaluate', {
-      expression: `window.__PDFORIENT__.loadBase64(${JSON.stringify(b64)}, ${JSON.stringify(name)})`,
+      expression: loadExpression,
       awaitPromise: true,
       returnByValue: true,
     });
@@ -155,11 +164,21 @@ class CDP {
       });
       if (act.exceptionDetails) throw new Error('actions: ' + JSON.stringify(act.exceptionDetails));
       const v = act.result.value;
-      const printable = v && typeof v === 'object' && v.data ? Object.assign({}, v, { data: '<' + String(v.data).length + ' chars>' }) : v;
+      const printable =
+        v && typeof v === 'object'
+          ? Object.assign({}, v, {
+              data: v.data ? '<' + String(v.data).length + ' chars>' : v.data,
+              __b64: v.__b64 ? '<' + String(v.__b64).length + ' chars>' : v.__b64,
+            })
+          : v;
       console.log('ACTIONS', JSON.stringify(printable));
       if (v && v.__image && v.data) {
         fs.writeFileSync(v.__image + '.png', Buffer.from(String(v.data).split(',')[1], 'base64'));
         console.log('IMAGE', v.__image + '.png', v.w, v.h);
+      }
+      if (v && v.__b64 && v.__file) {
+        fs.writeFileSync(v.__file, Buffer.from(String(v.__b64), 'base64'));
+        console.log('FILE', v.__file, fs.statSync(v.__file).size);
       }
       const after = await s('Runtime.evaluate', {
         expression: 'window.__PDFORIENT__.snapshot()',

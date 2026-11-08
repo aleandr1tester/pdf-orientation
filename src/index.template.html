@@ -48,7 +48,7 @@
         </svg>
       </div>
       <h2>Перетащите PDF сюда</h2>
-      <p>или нажмите, чтобы выбрать файл</p>
+      <p>или нажмите, чтобы выбрать файл — можно несколько сразу</p>
       <div class="hint">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         Файл обрабатывается в браузере и никуда не загружается
@@ -75,6 +75,8 @@
       <button class="btn btn-ghost btn-sm undo" id="btnUndoAuto" type="button">Вернуть как было</button>
     </div>
 
+    <div class="file-strip" id="fileStrip" hidden></div>
+
     <div class="filebar">
       <div class="file-ico" aria-hidden="true">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
@@ -85,10 +87,14 @@
       </div>
       <div class="spacer"></div>
       <div class="actions">
-        <button class="btn btn-sm" id="btnOtherFile" type="button">Другой файл</button>
+        <button class="btn btn-sm" id="btnOtherFile" type="button">Добавить файлы</button>
         <button class="btn btn-sm" id="btnPreviewResult" type="button" title="Открыть готовый PDF в новой вкладке">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 4.5 12 4.5 22.5 12 22.5 12 18.5 19.5 12 19.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
           Проверить
+        </button>
+        <button class="btn btn-sm" id="btnZip" type="button" hidden title="Скачать все файлы одним архивом">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M2 3h20v5H2z"/><path d="M10 12h4"/></svg>
+          Скачать всё (ZIP)
         </button>
         <button class="btn btn-primary" id="btnDownload" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
@@ -173,6 +179,13 @@
           </label>
         </div>
 
+        <div class="field" id="batchField" hidden>
+          <label class="check">
+            <input type="checkbox" id="batchAllCheck" checked>
+            <span>Применять ко всем файлам<small class="sub">Иначе — только к открытому</small></span>
+          </label>
+        </div>
+
         <div class="summary-box" id="summaryBox">—</div>
 
         <div class="note">
@@ -207,6 +220,7 @@
 <script type="text/plain" id="pdf-worker-src">/*__WORKER__*/</script>
 <script>/*__PDFLIB__*/</script>
 <script>/*__PDFJS__*/</script>
+<script>/*__JSZIP__*/</script>
 <script>/*__CORE__*/</script>
 <script>/*__APP__*/</script>
 </body>

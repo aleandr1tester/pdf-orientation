@@ -12,9 +12,10 @@ const core = read('src/orient-core.js');
 const app = read('src/app.js');
 const pdfLib = read('vendor/pdf-lib.min.js');
 const pdfJs = read('vendor/pdf.min.js');
+const jszip = read('vendor/jszip.min.js');
 const worker = read('vendor/pdf.worker.min.js');
 
-const parts = { pdfLib, pdfJs, worker };
+const parts = { pdfLib, pdfJs, jszip, worker };
 for (const [name, src] of Object.entries(parts)) {
   if (/<\/script/i.test(src)) throw new Error('В ' + name + ' найден </script — нужна экранировка');
 }
@@ -28,6 +29,7 @@ const put = (token, value) => {
 put('/*__STYLE__*/', css);
 put('/*__PDFLIB__*/', pdfLib);
 put('/*__PDFJS__*/', pdfJs);
+put('/*__JSZIP__*/', jszip);
 put('/*__CORE__*/', core);
 put('/*__APP__*/', app);
 put('/*__WORKER__*/', worker);
