@@ -25,6 +25,20 @@ check('нет внешних <script src=...>', !/<script[^>]+src=/i.test(html))
 check('нет внешних <link href="http...">', !/<link[^>]+href="https?:/i.test(html));
 check('нет <iframe>', !/<iframe/i.test(html));
 
+// Версия в подвале — ссылка на страницу проекта. Навигация по явному клику
+// не является сетевым запросом и разрешена, но в шаблоне не должно быть
+// никаких других внешних <a href>.
+console.log('\nВерсия в подвале — ссылка на страницу проекта');
+const REPO_URL = 'https://github.com/aleandr1tester/pdf-orientation/';
+const verLink = html.match(/<a\b[^>]*class="ver"[^>]*>[\s\S]*?<\/a>/i);
+check('в подвале index.html есть ссылка .ver', !!verLink);
+check('ссылка ведёт на страницу проекта на GitHub', !!verLink && verLink[0].includes('href="' + REPO_URL + '"'));
+check('номер версии подставлен сборкой (v<semver>)', !!verLink && /^v\d+\.\d+\.\d+$/.test(verLink[0].replace(/<[^>]+>/g, '').trim()));
+check('внешняя ссылка открывается в новой вкладке без доступа к opener', !!verLink && /target="_blank"/.test(verLink[0]) && /rel="noopener noreferrer"/.test(verLink[0]));
+const template = read('src/index.template.html');
+const externalHrefs = [...template.matchAll(/<a\b[^>]*href="(https?:[^"]+)"/gi)].map((m) => m[1]);
+check('в шаблоне внешние ссылки — только страница проекта', externalHrefs.length === 1 && externalHrefs[0] === REPO_URL);
+
 console.log('\nИсходники не содержат опасных примитивов');
 for (const file of ['src/app.js', 'src/orient-core.js']) {
   const code = read(file);

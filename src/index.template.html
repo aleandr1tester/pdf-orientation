@@ -240,11 +240,16 @@
   </section>
 </main>
 
-<!-- Подвал: напоминание о локальной обработке и версия (подставляется при сборке из package.json). -->
+<!--
+  Подвал: напоминание о локальной обработке и версия (подставляется при сборке из package.json).
+  Номер версии — ссылка на страницу проекта на GitHub. Это единственный внешний адрес
+  в приложении: переход происходит только по явному клику пользователя и не является
+  сетевым запросом (CSP ограничивает загрузку ресурсов, а не навигацию).
+-->
 <footer>
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3l7 3v6c0 4.4-3 7.5-7 9-4-1.5-7-4.6-7-9V6z"/></svg>
   <span>Работает офлайн: файлы не покидают ваш компьютер. Текст остаётся векторным и чётким.</span>
-  <span class="ver">v__VERSION__</span>
+  <a class="ver" href="https://github.com/aleandr1tester/pdf-orientation/" target="_blank" rel="noopener noreferrer" title="Страница проекта на GitHub" aria-label="Страница проекта на GitHub, версия v__VERSION__">v__VERSION__</a>
 </footer>
 
 <div class="toasts" id="toasts" aria-live="assertive"></div>
